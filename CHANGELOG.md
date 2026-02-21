@@ -11,8 +11,8 @@ All notable changes to SENTINEL v2 will be documented in this file.
 - **sentinel-file-watch.sh** — sensitive path monitor running as a persistent systemd service
   - Watches critical files (credentials, config, identity) for unexpected access events
   - Fires `CRITICAL-ACTIVE.json` immediately on open/read/modify/delete events
-  - Separate instances for HIVE (credentials/config) and EVE (workspace identity files)
-  - Smart suppression on EVE: MEMORY.md and cache.json accessed constantly by OpenClaw — only alerts on delete/move, not routine reads
+  - Configurable watch paths — deploy one instance per server
+  - Smart suppression: high-frequency files only alert on delete/move, not routine reads
   - Shares the same `CRITICAL-ACTIVE.json` protocol as watchdog and full scan
 
 ### Three alert layers now active

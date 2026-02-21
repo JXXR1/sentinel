@@ -33,8 +33,8 @@ SENSITIVE_SERVICES=(
     "6379:Redis"
     "8080:CrowdSec"
     "6060:CrowdSec-Prometheus"
-    "8337:OpenClaw-gateway"
-    "8334:OpenClaw-gateway"
+    "8080:myapp-service"  # replace with your application ports
+    
 )
 
 check_server() {
@@ -47,10 +47,10 @@ check_server() {
     echo "Top CPU:" >> "$LOG"
     if [ -z "$cmd_prefix" ]; then
         ps aux --sort=-%cpu | head -5 >> "$LOG" 2>&1
-        CPU_CHECK=$(ps aux | awk '$3 > 80 {print $11}' | grep -vE "(ps|awk|openclaw|clawdbot|ollama|chromium|node|clamscan|rkhunter|pgrep|curl|python3|fail2ban)")
+        CPU_CHECK=$(ps aux | awk '$3 > 80 {print $11}' | grep -vE "(ps|awk|myapp|myapp-daemon|ollama|chromium|node|clamscan|rkhunter|pgrep|curl|python3|fail2ban)")
     else
         $cmd_prefix "ps aux --sort=-%cpu | head -5" >> "$LOG" 2>&1
-        CPU_CHECK=$($cmd_prefix "ps aux | awk '\$3 > 80 {print \$11}' | grep -vE '(ps|awk|openclaw|clawdbot|ollama|chromium|node|clamscan|rkhunter)'")
+        CPU_CHECK=$($cmd_prefix "ps aux | awk '\$3 > 80 {print \$11}' | grep -vE '(ps|awk|myapp|myapp-daemon|ollama|chromium|node|clamscan|rkhunter)'")
     fi
     [ -n "$CPU_CHECK" ] && ESCALATE="$ESCALATE\n[$name] High CPU: $CPU_CHECK"
 

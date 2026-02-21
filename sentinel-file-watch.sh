@@ -8,13 +8,13 @@
 #          attack that slipped past the pre-install scanner.
 #
 # Runs as: systemd service (sentinel-file-watch.service)
-# Author: EVE (OpenClaw Security)
+
 # License: MIT
 # Version: 1.0.0
 
-ESCALATION_DIR="/root/hive/escalations"
+ESCALATION_DIR="${SENTINEL_DIR:-/var/lib/sentinel}/escalations"
 ACTIVE_FILE="$ESCALATION_DIR/CRITICAL-ACTIVE.json"
-LOG_DIR="/root/hive/logs"
+LOG_DIR="${SENTINEL_DIR:-/var/lib/sentinel}/logs"
 LOG="$LOG_DIR/file-watch.log"
 
 mkdir -p "$ESCALATION_DIR/handled" "$LOG_DIR"
@@ -24,20 +24,20 @@ mkdir -p "$ESCALATION_DIR/handled" "$LOG_DIR"
 # Add paths relevant to your setup
 # ============================================================
 PROTECTED_FILES=(
-    "/root/.openclaw/workspace/MEMORY.md"
-    "/root/.openclaw/workspace/SOUL.md"
-    "/root/.openclaw/workspace/IDENTITY.md"
-    "/root/.openclaw/workspace/TOOLS.md"
-    "/root/.openclaw/workspace/memory.json"
-    "/root/.openclaw/workspace/cache.json"
-    "/root/.env"
+    "$HOME/.config/myapp/memory.md"  # configure for your setup
+    "$HOME/.config/myapp/soul.md"
+    "$HOME/.config/myapp/identity.md"
+    "$HOME/.config/myapp/tools.md"
+    "$HOME/.config/myapp/memory.json"
+    "$HOME/.config/myapp/cache.json"
+    "$HOME/.env"  # or wherever your credentials are stored
 )
 
 # ============================================================
 # TRUSTED PROCESSES: access from these is expected — suppress
 # ============================================================
 TRUSTED_PROCESSES=(
-    "openclaw"
+    "myapp"  # add your application name here
     "node"
     "bash"
     "cat"

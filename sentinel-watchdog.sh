@@ -28,8 +28,8 @@ SENSITIVE_SERVICES=(
     "6379:Redis"
     "8080:CrowdSec"
     "6060:CrowdSec-Prometheus"
-    "8337:OpenClaw-gateway"
-    "8334:OpenClaw-gateway"
+    "8080:myapp-service"  # replace with your application ports
+    
 )
 
 check_host() {
