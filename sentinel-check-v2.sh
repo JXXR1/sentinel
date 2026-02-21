@@ -1,11 +1,12 @@
 #!/bin/bash
-# SENTINEL Security Check Script
+# SENTINEL Security Check Script v1.2.0
 # Runs on HIVE, checks both HIVE and EVE
 
 LOG_DIR="/root/hive/logs"
 mkdir -p "$LOG_DIR"
 TIMESTAMP=$(date -u +"%Y-%m-%d_%H-%M")
 LOG="$LOG_DIR/check-$TIMESTAMP.log"
+STATE_FILE="/root/hive/escalations/.last-state"
 ESCALATE=""
 ESCALATE_DETAIL=""
 
@@ -39,8 +40,7 @@ check_server() {
     local name=$1
     local cmd_prefix=$2
 
-    echo -e "
---- $name ---" >> "$LOG"
+    echo -e "\n--- $name ---" >> "$LOG"
 
     # CPU check
     echo "Top CPU:" >> "$LOG"
@@ -51,8 +51,7 @@ check_server() {
         $cmd_prefix "ps aux --sort=-%cpu | head -5" >> "$LOG" 2>&1
         CPU_CHECK=$($cmd_prefix "ps aux | awk '\$3 > 80 {print \$11}' | grep -vE '(ps|awk|openclaw|clawdbot|ollama|chromium|node|clamscan|rkhunter)'")
     fi
-    [ -n "$CPU_CHECK" ] && ESCALATE="$ESCALATE
-[$name] High CPU: $CPU_CHECK"
+    [ -n "$CPU_CHECK" ] && ESCALATE="$ESCALATE\n[$name] High CPU: $CPU_CHECK"
 
     # Cron check
     echo "Cron check:" >> "$LOG"
@@ -63,8 +62,7 @@ check_server() {
     fi
     if [ -n "$CRON_SUS" ]; then
         echo "SUSPICIOUS: $CRON_SUS" >> "$LOG"
-        ESCALATE="$ESCALATE
-[$name] Suspicious cron: $CRON_SUS"
+        ESCALATE="$ESCALATE\n[$name] Suspicious cron: $CRON_SUS"
     else
         echo "Clean" >> "$LOG"
     fi
@@ -80,8 +78,7 @@ check_server() {
     fi
     if [ -n "$MINER_PROC" ] || [ -n "$MINER_PORT" ]; then
         echo "MINING DETECTED" >> "$LOG"
-        ESCALATE="$ESCALATE
-[$name] MINER DETECTED!"
+        ESCALATE="$ESCALATE\n[$name] MINER DETECTED!"
     else
         echo "Clean" >> "$LOG"
     fi
@@ -107,18 +104,14 @@ check_server() {
             allowed_port=$(echo "$allowed" | cut -d: -f1)
             [ "$PORT" = "$allowed_port" ] && ALLOWED=1 && break
         done
-        [ "$ALLOWED" -eq 0 ] && UNEXPECTED_EXPOSED="$UNEXPECTED_EXPOSED
-  $line"
+        [ "$ALLOWED" -eq 0 ] && UNEXPECTED_EXPOSED="$UNEXPECTED_EXPOSED\n  $line"
     done <<< "$RAW_EXPOSED"
 
     if [ -n "$UNEXPECTED_EXPOSED" ]; then
         echo "EXPOSED PORTS DETECTED:" >> "$LOG"
         echo -e "$UNEXPECTED_EXPOSED" >> "$LOG"
-        ESCALATE="$ESCALATE
-[$name] EXPOSED PORTS - check immediately"
-        ESCALATE_DETAIL="$ESCALATE_DETAIL
-[$name] Exposed port details:
-$UNEXPECTED_EXPOSED"
+        ESCALATE="$ESCALATE\n[$name] EXPOSED PORTS - check immediately"
+        ESCALATE_DETAIL="$ESCALATE_DETAIL\n[$name] Exposed port details:\n$UNEXPECTED_EXPOSED"
     else
         echo "Clean - all doors closed" >> "$LOG"
     fi
@@ -139,16 +132,13 @@ $UNEXPECTED_EXPOSED"
         fi
         if [ -n "$BINDING" ]; then
             echo "  CRITICAL: $svc_name (port $svc_port) EXPOSED ON 0.0.0.0" >> "$LOG"
-            SENSITIVE_FAIL="$SENSITIVE_FAIL
-  CRITICAL: $svc_name port $svc_port is PUBLIC (should be Tailscale/localhost only)"
+            SENSITIVE_FAIL="$SENSITIVE_FAIL\n  CRITICAL: $svc_name port $svc_port is PUBLIC (should be Tailscale/localhost only)"
         fi
     done
 
     if [ -n "$SENSITIVE_FAIL" ]; then
-        ESCALATE="$ESCALATE
-[$name] SENSITIVE SERVICES EXPOSED - IMMEDIATE ACTION REQUIRED"
-        ESCALATE_DETAIL="$ESCALATE_DETAIL
-[$name] Sensitive service violations:$SENSITIVE_FAIL"
+        ESCALATE="$ESCALATE\n[$name] SENSITIVE SERVICES EXPOSED - IMMEDIATE ACTION REQUIRED"
+        ESCALATE_DETAIL="$ESCALATE_DETAIL\n[$name] Sensitive service violations:$SENSITIVE_FAIL"
     else
         echo "  All sensitive services properly bound" >> "$LOG"
     fi
@@ -160,25 +150,34 @@ $UNEXPECTED_EXPOSED"
         DISK=$($cmd_prefix "df -h / | tail -1 | awk '{print \$5}' | tr -d '%'")
     fi
     echo "Disk: ${DISK}%" >> "$LOG"
-    [ "$DISK" -gt 90 ] && ESCALATE="$ESCALATE
-[$name] Disk critical: ${DISK}%"
+    [ "$DISK" -gt 90 ] && ESCALATE="$ESCALATE\n[$name] Disk critical: ${DISK}%"
 }
 
 check_server "HIVE" ""
 check_server "EVE" "ssh 100.92.34.75"
 
 if [ -n "$ESCALATE" ]; then
-    echo -e "
-!!! ESCALATION NEEDED !!!" >> "$LOG"
+    echo -e "\n!!! ESCALATION NEEDED !!!" >> "$LOG"
     echo -e "$ESCALATE" >> "$LOG"
     mkdir -p /root/hive/escalations
     mkdir -p /root/hive/escalations/handled
 
-    echo -e "SENTINEL ALERT $TIMESTAMP
-$ESCALATE" > "/root/hive/escalations/$TIMESTAMP.md"
+    # ============================================================
+    # DELTA DETECTION: only escalate if findings changed since last run
+    # Suppresses repeat alerts for known issues
+    # ============================================================
+    CURRENT_FINGERPRINT=$(echo -e "$ESCALATE" | md5sum | cut -d' ' -f1)
+    LAST_FINGERPRINT=$(cat "$STATE_FILE" 2>/dev/null || echo "")
 
-    # Create CRITICAL-ACTIVE file — includes full details so EVE knows exactly what's wrong
-    cat > /root/hive/escalations/CRITICAL-ACTIVE.json << EOFJSON
+    if [ "$CURRENT_FINGERPRINT" = "$LAST_FINGERPRINT" ]; then
+        echo -e "\n[DELTA] Same findings as last run — suppressing repeat escalation" >> "$LOG"
+        echo "KNOWN"
+    else
+        echo "$CURRENT_FINGERPRINT" > "$STATE_FILE"
+        echo -e "SENTINEL ALERT $TIMESTAMP\n$ESCALATE" > "/root/hive/escalations/$TIMESTAMP.md"
+
+        # Create CRITICAL-ACTIVE file — includes full details so EVE knows exactly what's wrong
+        cat > /root/hive/escalations/CRITICAL-ACTIVE.json << EOFJSON
 {
   "timestamp": "$TIMESTAMP",
   "alert_type": "SECURITY_ESCALATION",
@@ -187,10 +186,11 @@ $ESCALATE" > "/root/hive/escalations/$TIMESTAMP.md"
 }
 EOFJSON
 
-    echo "ALERT"
+        echo "ALERT"
+    fi
 else
-    echo -e "
-All clear." >> "$LOG"
+    echo -e "\nAll clear." >> "$LOG"
     rm -f /root/hive/escalations/CRITICAL-ACTIVE.json
+    rm -f "$STATE_FILE"
     echo "OK"
 fi
