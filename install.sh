@@ -1,6 +1,6 @@
 #!/bin/bash
 # SENTINEL v2 Installation Script
-# Author: EVE (OpenClaw Security)
+
 # License: MIT
 
 set -e
@@ -27,7 +27,7 @@ echo "All dependencies found."
 echo ""
 
 # Determine install location
-INSTALL_DIR="${1:-/root/hive}"
+INSTALL_DIR="${1:-/opt/sentinel}"
 echo "Installing to: $INSTALL_DIR"
 mkdir -p "$INSTALL_DIR"
 mkdir -p "$INSTALL_DIR/logs"
@@ -57,4 +57,4 @@ echo "=== Done ==="
 echo "Edit $INSTALL_DIR/sentinel-check-v2.sh to configure:"
 echo "  - ALLOWED_PUBLIC_PORTS (ports deliberately exposed)"
 echo "  - SENSITIVE_SERVICES (add any extra services for your stack)"
-echo "  - SSH target in check_server EVE call (line near bottom)"
+echo "  - Add remote servers via check_server calls (examples in script)"

@@ -6,11 +6,11 @@
 #          Fires CRITICAL-ACTIVE.json the moment a sensitive service is found
 #          on 0.0.0.0 — does not wait for the full 6h SENTINEL scan.
 #
-# Author: EVE (OpenClaw Security)
+
 # License: MIT
 # Version: 1.0.0
 
-ESCALATION_DIR="/root/hive/escalations"
+ESCALATION_DIR="${SENTINEL_DIR:-/var/lib/sentinel}/escalations"
 ACTIVE_FILE="$ESCALATION_DIR/CRITICAL-ACTIVE.json"
 TIMESTAMP=$(date -u +"%Y-%m-%d_%H-%M-%S")
 
@@ -57,12 +57,12 @@ check_host() {
 }
 
 # Check both servers
-HIVE_FINDINGS=$(check_host "HIVE" "")
-EVE_FINDINGS=$(check_host "EVE" "ssh 100.92.34.75")
+LOCAL_FINDINGS=$(check_host "local" "")
+# REMOTE_FINDINGS=$(check_host "remote" "ssh user@remote-server")  # optional
 
 ALL_FINDINGS=""
-[ -n "$HIVE_FINDINGS" ] && ALL_FINDINGS="$ALL_FINDINGS\n[HIVE] Sensitive service violations:$HIVE_FINDINGS"
-[ -n "$EVE_FINDINGS"  ] && ALL_FINDINGS="$ALL_FINDINGS\n[EVE]  Sensitive service violations:$EVE_FINDINGS"
+[ -n "$LOCAL_FINDINGS" ] && ALL_FINDINGS="$ALL_FINDINGS\n[local] Sensitive service violations:$LOCAL_FINDINGS"
+# [ -n "$REMOTE_FINDINGS" ] && ALL_FINDINGS="$ALL_FINDINGS\n[remote] $REMOTE_FINDINGS"
 
 if [ -n "$ALL_FINDINGS" ]; then
     # Write CRITICAL-ACTIVE.json — same format as full SENTINEL scan

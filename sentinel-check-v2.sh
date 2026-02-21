@@ -1,12 +1,13 @@
 #!/bin/bash
 # SENTINEL Security Check Script v1.2.0
-# Runs on HIVE, checks both HIVE and EVE
+# Runs locally; optionally checks remote servers via SSH
 
-LOG_DIR="/root/hive/logs"
+SENTINEL_DIR="${SENTINEL_DIR:-/var/lib/sentinel}"
+LOG_DIR="$SENTINEL_DIR/logs"
 mkdir -p "$LOG_DIR"
 TIMESTAMP=$(date -u +"%Y-%m-%d_%H-%M")
 LOG="$LOG_DIR/check-$TIMESTAMP.log"
-STATE_FILE="/root/hive/escalations/.last-state"
+STATE_FILE="$SENTINEL_DIR/escalations/.last-state"
 ESCALATE=""
 ESCALATE_DETAIL=""
 
@@ -153,14 +154,14 @@ check_server() {
     [ "$DISK" -gt 90 ] && ESCALATE="$ESCALATE\n[$name] Disk critical: ${DISK}%"
 }
 
-check_server "HIVE" ""
-check_server "EVE" "ssh 100.92.34.75"
+check_server "local" ""
+# check_server "remote" "ssh user@remote-server"  # optional: add remote servers here
 
 if [ -n "$ESCALATE" ]; then
     echo -e "\n!!! ESCALATION NEEDED !!!" >> "$LOG"
     echo -e "$ESCALATE" >> "$LOG"
-    mkdir -p /root/hive/escalations
-    mkdir -p /root/hive/escalations/handled
+    mkdir -p "$SENTINEL_DIR/escalations"
+    mkdir -p "$SENTINEL_DIR/escalations/handled"
 
     # ============================================================
     # DELTA DETECTION: only escalate if findings changed since last run
@@ -174,10 +175,10 @@ if [ -n "$ESCALATE" ]; then
         echo "KNOWN"
     else
         echo "$CURRENT_FINGERPRINT" > "$STATE_FILE"
-        echo -e "SENTINEL ALERT $TIMESTAMP\n$ESCALATE" > "/root/hive/escalations/$TIMESTAMP.md"
+        echo -e "SENTINEL ALERT $TIMESTAMP\n$ESCALATE" > "$SENTINEL_DIR/escalations/$TIMESTAMP.md"
 
-        # Create CRITICAL-ACTIVE file — includes full details so EVE knows exactly what's wrong
-        cat > /root/hive/escalations/CRITICAL-ACTIVE.json << EOFJSON
+        # Write structured escalation file for downstream alerting
+        cat > "$SENTINEL_DIR/escalations/CRITICAL-ACTIVE.json" << EOFJSON
 {
   "timestamp": "$TIMESTAMP",
   "alert_type": "SECURITY_ESCALATION",
@@ -190,7 +191,7 @@ EOFJSON
     fi
 else
     echo -e "\nAll clear." >> "$LOG"
-    rm -f /root/hive/escalations/CRITICAL-ACTIVE.json
+    rm -f "$SENTINEL_DIR/escalations/CRITICAL-ACTIVE.json"
     rm -f "$STATE_FILE"
     echo "OK"
 fi
