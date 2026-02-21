@@ -6,79 +6,102 @@ Companion to [Skill Scanner v2](https://github.com/JXXR1/skill-scanner-v2) — s
 
 ---
 
-## What it does
+## Two scripts. Two layers.
 
-SENTINEL runs on a schedule and audits both servers in one pass. It checks for the things that matter and escalates with enough detail to act on — not just that something is wrong, but exactly what, where, and what process is responsible.
+| Script | Purpose | Frequency | Scope |
+|--------|---------|-----------|-------|
+| `sentinel-watchdog.sh` | Fire alarm | Every 1–2 min | Sensitive services only |
+| `sentinel-check-v2.sh` | Full audit | Every 6h | Everything |
 
-### Checks
+**sentinel-watchdog.sh** is the fast layer. It checks only the services that must never be publicly exposed (Qdrant, Ollama, Redis, OpenClaw gateways). If any appear on `0.0.0.0`, it writes `CRITICAL-ACTIVE.json` within minutes. Minimal overhead — `ss` check per service, nothing else.
 
-**1. Sensitive service hardlist**
-Named services that must never be publicly exposed: Qdrant, Ollama, Redis, CrowdSec, OpenClaw gateways. If any appear on `0.0.0.0`, it escalates immediately with the service name.
+**sentinel-check-v2.sh** is the comprehensive layer. Miners, suspicious crons, disk usage, broad port sweep, dual-server audit. Runs every 6 hours. The watchdog handles the fire; SENTINEL handles the investigation.
 
-**2. Front door scan**
-All ports bound to `0.0.0.0` or `*` are logged. Ports you intentionally expose go in `ALLOWED_PUBLIC_PORTS`. Everything else triggers escalation.
-
-**3. Miner detection**
-Checks running processes and listening ports for known mining signatures (xmrig, minerd, cgminer, etc.).
-
-**4. Suspicious cron scan**
-Flags cron jobs that pipe curl/wget directly to shell, or write to /tmp.
-
-**5. Disk check**
-Escalates if disk usage exceeds 90%.
-
-**6. Dual-server coverage**
-Runs locally on HIVE, then SSHes to EVE and runs the same checks there. One cron job, full picture.
+Both write to the same `CRITICAL-ACTIVE.json` protocol so your monitoring agent reads one file regardless of which layer fired.
 
 ---
 
-## Alert format
+## sentinel-watchdog.sh
 
-When something is wrong, SENTINEL writes a structured `CRITICAL-ACTIVE.json` to `/root/hive/escalations/`:
+### What it checks
+Sensitive services that must never be bound to `0.0.0.0` or `*`:
+- **Qdrant** (6333, 6334)
+- **Ollama** (11434)
+- **Redis** (6379)
+- **CrowdSec** (8080, 6060)
+- **OpenClaw gateways** (8337, 8334)
 
+Checks both HIVE and EVE in a single run via SSH.
+
+### Alert format
 ```json
 {
-  "timestamp": "2026-02-20_17-15",
-  "alert_type": "SECURITY_ESCALATION",
-  "summary": "[HIVE] SENSITIVE SERVICES EXPOSED - IMMEDIATE ACTION REQUIRED",
-  "details": "[HIVE] Sensitive service violations:
-  CRITICAL: Qdrant-HTTP port 6333 is PUBLIC (should be Tailscale/localhost only)"
+  "timestamp": "2026-02-21_08-30-00",
+  "alert_type": "WATCHDOG_CRITICAL",
+  "source": "sentinel-watchdog",
+  "summary": "SENSITIVE SERVICE EXPOSED ON 0.0.0.0 — IMMEDIATE ACTION REQUIRED",
+  "details": "[HIVE] Sensitive service violations:\n  CRITICAL: Qdrant-HTTP (port 6333) EXPOSED ON 0.0.0.0 — process: qdrant"
 }
 ```
 
-Your monitoring layer reads this file. If it exists, alert fires. If checks pass, the file is deleted.
+### Setup
+```bash
+# Copy to HIVE
+scp sentinel-watchdog.sh root@your-hive-server:/root/hive/
+chmod +x /root/hive/sentinel-watchdog.sh
+
+# Add to crontab (every 2 minutes)
+crontab -e
+*/2 * * * * /root/hive/sentinel-watchdog.sh
+```
 
 ---
 
-## Setup
+## sentinel-check-v2.sh
 
-**1. Copy the script to your HIVE server**
+### What it checks
+1. **Sensitive service hardlist** — named services that must never be publicly exposed
+2. **Front door scan** — all ports on `0.0.0.0` filtered against your allowlist
+3. **Miner detection** — running processes and listening ports for known mining signatures
+4. **Suspicious cron scan** — jobs piping curl/wget to shell or writing to /tmp
+5. **Disk check** — escalates above 90%
+6. **Dual-server coverage** — HIVE and EVE in one job
+
+### Alert format
+```json
+{
+  "timestamp": "2026-02-21_08-00",
+  "alert_type": "SECURITY_ESCALATION",
+  "summary": "[HIVE] SENSITIVE SERVICES EXPOSED - IMMEDIATE ACTION REQUIRED",
+  "details": "[HIVE] Sensitive service violations:\n  CRITICAL: Qdrant-HTTP port 6333 is PUBLIC"
+}
+```
+
+### Setup
 ```bash
 scp sentinel-check-v2.sh root@your-hive-server:/root/hive/
 chmod +x /root/hive/sentinel-check-v2.sh
-```
 
-**2. Configure your allowlist**
-Edit the `ALLOWED_PUBLIC_PORTS` array for ports you deliberately expose (e.g. 80/443 for nginx). Leave empty if nothing should be public.
-
-**3. Configure sensitive services**
-Edit the `SENSITIVE_SERVICES` array to match your stack. Default covers Qdrant, Ollama, Redis, CrowdSec, OpenClaw.
-
-**4. Schedule it**
-```bash
+# Add to crontab (every 6 hours)
 crontab -e
-# Run every 6 hours
 0 */6 * * * /root/hive/sentinel-check-v2.sh >> /root/hive/logs/sentinel-cron.log 2>&1
 ```
 
-**5. Wire up alerting**
-SENTINEL writes `/root/hive/escalations/CRITICAL-ACTIVE.json` when something is wrong. Point your monitoring agent at that file.
+---
+
+## CRITICAL-ACTIVE.json protocol
+
+Both scripts write to `/root/hive/escalations/CRITICAL-ACTIVE.json` when something is wrong. Your monitoring agent checks for this file:
+- **File exists** → alert, read contents, act
+- **File absent** → all clear
+
+When the issue is resolved, the file is deleted on the next clean run. Handled alerts move to `/root/hive/escalations/handled/`.
 
 ---
 
-## Architecture note
+## Note on the security stack
 
-SENTINEL runs on a 6-hour schedule. That means the detection window for an exposed port is up to 6 hours. For critical services, consider a separate high-frequency watchdog (every few minutes) checking only the sensitive service list, with SENTINEL as the comprehensive periodic audit layer. They serve different purposes.
+UFW, CrowdSec, and AppArmor already provide real-time blocking at the network and process level. Even during the watchdog check interval, an exposed port is not automatically reachable externally. SENTINEL and the watchdog close the *detection and notification* gap — the security stack closes the *exploitation* gap.
 
 ---
 
@@ -86,15 +109,12 @@ SENTINEL runs on a 6-hour schedule. That means the detection window for an expos
 
 - Bash
 - `ss` (iproute2)
-- `jq` (for JSON escalation output)
-- SSH key access from HIVE to EVE (if running dual-server mode)
+- `jq`
+- `python3` (for JSON source check in watchdog)
+- SSH key access from HIVE to EVE
 
 ---
 
 ## Related
 
 - [Skill Scanner v2](https://github.com/JXXR1/skill-scanner-v2) — pre-installation skill auditing, 24 detection modules
-
----
-
-*Built after a real incident. Two services sat exposed on 0.0.0.0 for days. No breach, but too close. SENTINEL v2 would have caught them on day one.*
