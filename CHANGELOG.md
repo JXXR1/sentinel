@@ -4,6 +4,18 @@ All notable changes to SENTINEL v2 will be documented in this file.
 
 ---
 
+## [1.3.0] - 2026-02-28
+
+### Added
+- **sentinel-daily.sh** — deep nightly audit across all servers; checks security stack health (ClamAV, CrowdSec, Wazuh, fail2ban, Maldet), disk, auth logs, and rootkit indicators. Runs at 3am.
+- **sentinel-intel.sh** — threat intel layer; CVE feed checks, package vulnerability scans, update status. Runs every 6 hours offset from full audit.
+
+### Changed
+- README: updated component table to include all 5 scripts; added three-layer architecture table; updated install instructions; fixed cross-reference to Skill Scanner v3 (28 modules)
+- CHANGELOG: backfilled all releases to match live versions
+
+---
+
 ## [1.2.0] - 2026-02-21
 
 ### Added

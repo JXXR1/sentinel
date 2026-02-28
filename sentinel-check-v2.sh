@@ -1,25 +1,23 @@
 #!/bin/bash
 # SENTINEL Security Check Script v1.2.0
-# Runs locally; optionally checks remote servers via SSH
+# Runs on HIVE, checks both HIVE and EVE
 
-SENTINEL_DIR="${SENTINEL_DIR:-/var/lib/sentinel}"
-LOG_DIR="$SENTINEL_DIR/logs"
+LOG_DIR="/root/hive/logs"
 mkdir -p "$LOG_DIR"
 TIMESTAMP=$(date -u +"%Y-%m-%d_%H-%M")
 LOG="$LOG_DIR/check-$TIMESTAMP.log"
-STATE_FILE="$SENTINEL_DIR/escalations/.last-state"
+STATE_FILE="/root/hive/escalations/.last-state"
 ESCALATE=""
 ESCALATE_DETAIL=""
 
 echo "=== SENTINEL Check $TIMESTAMP ===" > "$LOG"
 
 # ============================================================
-# ALLOWLIST: ports that are intentionally public-facing
+# ALLOWLIST: ports bound to 0.0.0.0 but UFW-protected (not truly public)
 # Format: "PORT:REASON"
-# Only add here if you explicitly want it reachable from internet
 # ============================================================
 ALLOWED_PUBLIC_PORTS=(
-    # Add ports here if deliberately public, e.g. "80:nginx" "443:nginx"
+    "1515:Wazuh-authd-UFW-Tailscale-only"  # Cannot bind to specific interface, UFW blocks public access
 )
 
 # ============================================================
@@ -33,8 +31,10 @@ SENSITIVE_SERVICES=(
     "6379:Redis"
     "8080:CrowdSec"
     "6060:CrowdSec-Prometheus"
-    "8080:myapp-service"  # replace with your application ports
-    
+    "8337:OpenClaw-gateway"
+    "8334:OpenClaw-gateway"
+    "1514:Wazuh-remoted"
+    "55000:Wazuh-API"
 )
 
 check_server() {
@@ -47,10 +47,10 @@ check_server() {
     echo "Top CPU:" >> "$LOG"
     if [ -z "$cmd_prefix" ]; then
         ps aux --sort=-%cpu | head -5 >> "$LOG" 2>&1
-        CPU_CHECK=$(ps aux | awk '$3 > 80 {print $11}' | grep -vE "(ps|awk|myapp|myapp-daemon|ollama|chromium|node|clamscan|rkhunter|pgrep|curl|python3|fail2ban)")
+        CPU_CHECK=$(ps aux | awk '$3 > 80 {print $11}' | grep -vE "(ps|awk|openclaw|clawdbot|ollama|chromium|node|clamscan|rkhunter|pgrep|curl|python3|fail2ban)")
     else
         $cmd_prefix "ps aux --sort=-%cpu | head -5" >> "$LOG" 2>&1
-        CPU_CHECK=$($cmd_prefix "ps aux | awk '\$3 > 80 {print \$11}' | grep -vE '(ps|awk|myapp|myapp-daemon|ollama|chromium|node|clamscan|rkhunter)'")
+        CPU_CHECK=$($cmd_prefix "ps aux | awk '\$3 > 80 {print \$11}' | grep -vE '(ps|awk|openclaw|clawdbot|ollama|chromium|node|clamscan|rkhunter)'")
     fi
     [ -n "$CPU_CHECK" ] && ESCALATE="$ESCALATE\n[$name] High CPU: $CPU_CHECK"
 
@@ -144,6 +144,70 @@ check_server() {
         echo "  All sensitive services properly bound" >> "$LOG"
     fi
 
+
+    # ============================================================
+    # SECURITY STACK HEALTH CHECK
+    # All 24 layers must be running — alert if any are down
+    # ============================================================
+    echo "Security stack health:" >> "$LOG"
+
+    SYSTEMD_SERVICES="tailscaled crowdsec crowdsec-firewall-bouncer fail2ban sophos-spl clamav-daemon auditd osqueryd"
+    STACK_FAIL=""
+
+    for svc in $SYSTEMD_SERVICES; do
+        if [ -z "$cmd_prefix" ]; then
+            STATUS=$(systemctl is-active "$svc" 2>/dev/null || echo "not-found")
+        else
+            STATUS=$($cmd_prefix "systemctl is-active $svc 2>/dev/null || echo not-found")
+        fi
+        if [ "$STATUS" != "active" ]; then
+            STACK_FAIL="$STACK_FAIL
+  DOWN: $svc (status: $STATUS)"
+            echo "  FAIL: $svc is $STATUS" >> "$LOG"
+        else
+            echo "  OK: $svc" >> "$LOG"
+        fi
+    done
+
+    # Wazuh check (uses wazuh-control, not systemctl)
+    if [ -z "$cmd_prefix" ]; then
+        WAZUH_DOWN=$(/var/ossec/bin/wazuh-control status 2>/dev/null | grep "not running" | grep -Ev "wazuh-clusterd|wazuh-maild|wazuh-dbd|wazuh-csyslogd|wazuh-agentlessd|wazuh-integratord|wazuh-authd" | wc -l)
+    else
+        WAZUH_DOWN=$($cmd_prefix "/var/ossec/bin/wazuh-control status 2>/dev/null | grep 'not running' | grep -Ev 'wazuh-clusterd|wazuh-maild|wazuh-dbd|wazuh-csyslogd|wazuh-agentlessd|wazuh-integratord|wazuh-authd' | wc -l")
+    fi
+    if [ "$WAZUH_DOWN" -gt 0 ] 2>/dev/null; then
+        STACK_FAIL="$STACK_FAIL
+  DOWN: wazuh ($WAZUH_DOWN core processes not running)"
+        echo "  FAIL: wazuh has $WAZUH_DOWN processes down" >> "$LOG"
+    else
+        echo "  OK: wazuh" >> "$LOG"
+    fi
+
+    # UFW check via iptables policy
+    if [ -z "$cmd_prefix" ]; then
+        UFW_POLICY=$(/sbin/iptables -L INPUT -n 2>/dev/null | grep -c "policy DROP\|policy ACCEPT" || echo "0")
+        UFW_DROP=$(/sbin/iptables -L INPUT -n 2>/dev/null | head -1 | grep -c "DROP" || echo "0")
+    else
+        UFW_DROP=$($cmd_prefix "/sbin/iptables -L INPUT -n 2>/dev/null | head -1 | grep -c DROP || echo 0")
+    fi
+    if [ "${UFW_DROP:-0}" -eq 0 ] 2>/dev/null; then
+        STACK_FAIL="$STACK_FAIL
+  DOWN: ufw/iptables (INPUT policy is not DROP)";
+        echo "  FAIL: ufw INPUT policy not DROP" >> "$LOG"
+    else
+        echo "  OK: ufw (INPUT DROP policy active)" >> "$LOG"
+    fi
+
+    if [ -n "$STACK_FAIL" ]; then
+        ESCALATE="$ESCALATE
+[$name] SECURITY STACK DEGRADED - services down"
+        ESCALATE_DETAIL="$ESCALATE_DETAIL
+[$name] Security stack failures:$STACK_FAIL"
+        echo "  => Escalating stack failures" >> "$LOG"
+    else
+        echo "  All security services healthy" >> "$LOG"
+    fi
+
     # Disk check
     if [ -z "$cmd_prefix" ]; then
         DISK=$(df -h / | tail -1 | awk '{print $5}' | tr -d '%')
@@ -154,14 +218,30 @@ check_server() {
     [ "$DISK" -gt 90 ] && ESCALATE="$ESCALATE\n[$name] Disk critical: ${DISK}%"
 }
 
-check_server "local" ""
-# check_server "remote" "ssh user@remote-server"  # optional: add remote servers here
+check_server "HIVE" ""
+check_server "EVE" "ssh 100.79.182.103"
+
+# ============================================================
+# AI FILE INTEGRITY CHECK (Layer 29)
+# ============================================================
+echo "AI file integrity check:" >> "$LOG"
+FIM_RESULT=$(ssh 100.79.182.103 "bash /root/.openclaw/workspace/file-integrity-monitor.sh 2>/dev/null" 2>/dev/null)
+FIM_EXIT=$?
+if [ $FIM_EXIT -eq 2 ]; then
+    ESCALATE="$ESCALATE
+[EVE] FILE INTEGRITY VIOLATION: $FIM_RESULT"
+    ESCALATE_DETAIL="$ESCALATE_DETAIL
+[EVE] AI stack file tamper detected"
+    echo "  => File integrity ALERT" >> "$LOG"
+else
+    echo "  => File integrity OK" >> "$LOG"
+fi
 
 if [ -n "$ESCALATE" ]; then
     echo -e "\n!!! ESCALATION NEEDED !!!" >> "$LOG"
     echo -e "$ESCALATE" >> "$LOG"
-    mkdir -p "$SENTINEL_DIR/escalations"
-    mkdir -p "$SENTINEL_DIR/escalations/handled"
+    mkdir -p /root/hive/escalations
+    mkdir -p /root/hive/escalations/handled
 
     # ============================================================
     # DELTA DETECTION: only escalate if findings changed since last run
@@ -175,10 +255,10 @@ if [ -n "$ESCALATE" ]; then
         echo "KNOWN"
     else
         echo "$CURRENT_FINGERPRINT" > "$STATE_FILE"
-        echo -e "SENTINEL ALERT $TIMESTAMP\n$ESCALATE" > "$SENTINEL_DIR/escalations/$TIMESTAMP.md"
+        echo -e "SENTINEL ALERT $TIMESTAMP\n$ESCALATE" > "/root/hive/escalations/$TIMESTAMP.md"
 
-        # Write structured escalation file for downstream alerting
-        cat > "$SENTINEL_DIR/escalations/CRITICAL-ACTIVE.json" << EOFJSON
+        # Create CRITICAL-ACTIVE file — includes full details so EVE knows exactly what's wrong
+        cat > /root/hive/escalations/CRITICAL-ACTIVE.json << EOFJSON
 {
   "timestamp": "$TIMESTAMP",
   "alert_type": "SECURITY_ESCALATION",
@@ -191,7 +271,14 @@ EOFJSON
     fi
 else
     echo -e "\nAll clear." >> "$LOG"
-    rm -f "$SENTINEL_DIR/escalations/CRITICAL-ACTIVE.json"
+    rm -f /root/hive/escalations/CRITICAL-ACTIVE.json
     rm -f "$STATE_FILE"
     echo "OK"
+fi
+
+# Write result to Redis short-term memory
+if [ -n "$ESCALATE" ]; then
+    python3 /root/hive/redis-memory.py write 'sentinel_alert' "SENTINEL 6h scan: ALERT" "$(echo -e "$ESCALATE" | head -5)" 2>/dev/null
+else
+    python3 /root/hive/redis-memory.py write 'sentinel' "SENTINEL 6h scan: all clear" "Both servers healthy" 2>/dev/null
 fi
