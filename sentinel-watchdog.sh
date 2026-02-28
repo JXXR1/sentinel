@@ -7,7 +7,7 @@
 #
 # Author: EVE (OpenClaw Security)
 # License: MIT
-# Version: 1.2.0
+# Version: 1.3.0
 
 ESCALATION_DIR="/root/hive/escalations"
 ACTIVE_FILE="$ESCALATION_DIR/CRITICAL-ACTIVE.json"
@@ -30,6 +30,14 @@ SENSITIVE_SERVICES=(
     "8334:OpenClaw-gateway"
     "1514:Wazuh-remoted"
     "55000:Wazuh-API"
+)
+
+# ============================================================
+# ALLOWED PUBLIC PORTS: ports on 0.0.0.0 that are intentional (e.g. UFW-protected)
+# Format: "PORT:REASON"
+# ============================================================
+ALLOWED_PUBLIC_PORTS=(
+    "1515:Wazuh-authd-UFW-Tailscale-only"
 )
 
 # ============================================================
@@ -59,6 +67,31 @@ check_host() {
             findings="$findings\n  CRITICAL: $svc_name (port $svc_port) EXPOSED ON 0.0.0.0${PROCESS:+ — process: $PROCESS}"
         fi
     done
+
+    # --- Catch-all: ANY unexpected port on 0.0.0.0 ---
+    if [ -z "$cmd_prefix" ]; then
+        RAW_EXPOSED=$(ss -tlnp 2>/dev/null | grep -E "0\.0\.0\.0:[0-9]|\*:[0-9]" | grep -v "127.0.0.1")
+    else
+        RAW_EXPOSED=$($cmd_prefix "ss -tlnp 2>/dev/null | awk '/0\.0\.0\.0:[0-9]|\*:[0-9]/{print}'" 2>/dev/null)
+    fi
+    while IFS= read -r line; do
+        [ -z "$line" ] && continue
+        PORT=$(echo "$line" | grep -oE ":[0-9]+" | head -1 | tr -d ':')
+        [ -z "$PORT" ] && continue
+        ALLOWED=0
+        for allowed in "${ALLOWED_PUBLIC_PORTS[@]}"; do
+            ap=$(echo "$allowed" | cut -d: -f1)
+            [ "$PORT" = "$ap" ] && ALLOWED=1 && break
+        done
+        for entry in "${SENSITIVE_SERVICES[@]}"; do
+            sp=$(echo "$entry" | cut -d: -f1)
+            [ "$PORT" = "$sp" ] && ALLOWED=1 && break
+        done
+        if [ "$ALLOWED" -eq 0 ]; then
+            PROC=$(echo "$line" | grep -oE 'users:\(\("[^"]+' | grep -oE '"[^"]+' | tr -d '"' | head -1)
+            findings="$findings\n  CRITICAL: UNEXPECTED PORT $PORT EXPOSED ON 0.0.0.0${PROC:+ — process: $PROC}"
+        fi
+    done <<< "$RAW_EXPOSED"
 
     # --- Security stack health check ---
     for svc in $REQUIRED_SERVICES; do

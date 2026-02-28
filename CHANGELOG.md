@@ -4,6 +4,13 @@ All notable changes to SENTINEL v2 will be documented in this file.
 
 ---
 
+## [1.3.1] - 2026-02-28
+
+### Fixed
+- **Critical detection gap in sentinel-watchdog.sh** — watchdog previously only checked a hardcoded list of known sensitive ports. A new arbitrary port (e.g. a game server, dev tool) opened on `0.0.0.0` would go undetected for up to 6 hours until `sentinel-check-v2.sh` ran. Watchdog now scans ALL ports bound to `0.0.0.0` and alerts on anything not in the `ALLOWED_PUBLIC_PORTS` allowlist — same logic as the full audit, but at 2-minute frequency.
+
+---
+
 ## [1.3.0] - 2026-02-28
 
 ### Added
