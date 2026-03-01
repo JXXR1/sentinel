@@ -124,5 +124,5 @@ Example: a heartbeat agent that checks the file on every poll and notifies you.
 
 ## Related
 
-**Skill Scanner v3** — pre-installation skill auditing, 28 detection modules + LLM semantic analysis  
+**Skill Scanner v3** — pre-installation skill auditing, 31 detection modules + LLM semantic analysis  
 `github.com/JXXR1/skill-scanner-v2`

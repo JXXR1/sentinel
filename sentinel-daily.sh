@@ -104,6 +104,93 @@ RKH_EVE=$(ssh $EVE_IP "rkhunter --check --skip-keypress --report-warnings-only 2
 echo "$RKH_EVE" >> "$LOG"
 
 # ============================================================
+# CREDENTIAL HYGIENE — both servers
+# ============================================================
+credential_audit() {
+    local name=$1
+    local prefix=$2
+    local FINDINGS=""
+
+    echo -e "\n--- Credential Hygiene: $name ---" >> "$LOG"
+
+    # 1. Plaintext credentials in config files (outside .env)
+    if [ -z "$prefix" ]; then
+        CRED_FILES=$(grep -rln "sk_\|sk-ant-\|Bearer \|api_key=\|apikey=\|API_KEY=\|password=" /root --include="*.json" --include="*.yaml" --include="*.toml" --include="*.conf" --include="*.cfg" --include="*.ini" 2>/dev/null | grep -v node_modules | grep -v ".git/" | grep -v "/backups/" | head -20)
+    else
+        CRED_FILES=$($prefix "grep -rln 'sk_\|sk-ant-\|Bearer \|api_key=\|apikey=\|API_KEY=\|password=' /root --include='*.json' --include='*.yaml' --include='*.toml' --include='*.conf' --include='*.cfg' --include='*.ini' 2>/dev/null | grep -v node_modules | grep -v '.git/' | grep -v '/backups/' | head -20")
+    fi
+    if [ -n "$CRED_FILES" ]; then
+        COUNT=$(echo "$CRED_FILES" | wc -l)
+        echo "  WARN: $COUNT file(s) with plaintext credentials:" >> "$LOG"
+        echo "$CRED_FILES" | while read f; do echo "    $f" >> "$LOG"; done
+        FINDINGS="$FINDINGS\n  $COUNT config file(s) with plaintext credentials"
+    else
+        echo "  OK: No stray plaintext credentials in config files" >> "$LOG"
+    fi
+
+    # 2. Shell history secrets
+    if [ -z "$prefix" ]; then
+        HIST_SECRETS=$(grep -n "password\|passwd\|secret\|token\|Bearer\|sk-ant-\|sk_live\|api_key" ~/.bash_history ~/.zsh_history 2>/dev/null | grep -v "grep\|history" | wc -l)
+    else
+        HIST_SECRETS=$($prefix "grep -n 'password\|passwd\|secret\|token\|Bearer\|sk-ant-\|sk_live\|api_key' ~/.bash_history ~/.zsh_history 2>/dev/null | grep -v 'grep\|history' | wc -l")
+    fi
+    if [ "${HIST_SECRETS:-0}" -gt 0 ] 2>/dev/null; then
+        echo "  WARN: $HIST_SECRETS line(s) with potential secrets in shell history" >> "$LOG"
+        FINDINGS="$FINDINGS\n  $HIST_SECRETS credential(s) in shell history"
+    else
+        echo "  OK: Shell history clean" >> "$LOG"
+    fi
+
+    # 3. Scattered .env / .pem / key files
+    if [ -z "$prefix" ]; then
+        SCATTERED=$(find /root -maxdepth 5 \( -name "*.pem" -o -name "*.key" -o -name "id_rsa" -o -name ".env" \) 2>/dev/null | grep -v node_modules | grep -v ".git/" | grep -v "/backups/" | sort)
+    else
+        SCATTERED=$($prefix "find /root -maxdepth 5 \( -name '*.pem' -o -name '*.key' -o -name 'id_rsa' -o -name '.env' \) 2>/dev/null | grep -v node_modules | grep -v '.git/' | grep -v '/backups/' | sort")
+    fi
+    if [ -n "$SCATTERED" ]; then
+        COUNT=$(echo "$SCATTERED" | wc -l)
+        echo "  INFO: $COUNT credential/key file(s) found:" >> "$LOG"
+        echo "$SCATTERED" | while read f; do echo "    $f" >> "$LOG"; done
+
+        # Check for stale ones (not modified in 30+ days)
+        if [ -z "$prefix" ]; then
+            STALE=$(find /root -maxdepth 5 \( -name "*.pem" -o -name "*.key" -o -name ".env" \) -mtime +30 2>/dev/null | grep -v node_modules | grep -v ".git/" | grep -v "/backups/" | wc -l)
+        else
+            STALE=$($prefix "find /root -maxdepth 5 \( -name '*.pem' -o -name '*.key' -o -name '.env' \) -mtime +30 2>/dev/null | grep -v node_modules | grep -v '.git/' | grep -v '/backups/' | wc -l")
+        fi
+        if [ "${STALE:-0}" -gt 0 ] 2>/dev/null; then
+            echo "  WARN: $STALE file(s) not modified in 30+ days — may contain stale credentials" >> "$LOG"
+            FINDINGS="$FINDINGS\n  $STALE stale credential file(s) (30+ days untouched)"
+        fi
+    else
+        echo "  OK: No scattered credential files" >> "$LOG"
+    fi
+
+    # 4. World-readable credential files
+    if [ -z "$prefix" ]; then
+        WORLD_READ=$(find /root -maxdepth 5 -name ".env" -perm -o=r 2>/dev/null | grep -v "/backups/" | head -10)
+    else
+        WORLD_READ=$($prefix "find /root -maxdepth 5 -name '.env' -perm -o=r 2>/dev/null | grep -v '/backups/' | head -10")
+    fi
+    if [ -n "$WORLD_READ" ]; then
+        COUNT=$(echo "$WORLD_READ" | wc -l)
+        echo "  WARN: $COUNT .env file(s) are world-readable!" >> "$LOG"
+        echo "$WORLD_READ" | while read f; do echo "    $f" >> "$LOG"; done
+        FINDINGS="$FINDINGS\n  $COUNT world-readable .env file(s)"
+    fi
+
+    if [ -n "$FINDINGS" ]; then
+        echo "  => Credential hygiene issues on $name" >> "$LOG"
+        ESCALATE="$ESCALATE\n[$name] CREDENTIAL HYGIENE:$FINDINGS"
+    else
+        echo "  All credential checks passed." >> "$LOG"
+    fi
+}
+
+credential_audit "HIVE" ""
+credential_audit "EVE" "ssh $EVE_IP"
+
+# ============================================================
 # ESCALATION
 # ============================================================
 if [ -n "$ESCALATE" ]; then

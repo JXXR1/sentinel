@@ -55,3 +55,12 @@ All notable changes to SENTINEL v2 will be documented in this file.
 
 ### Added
 - Initial release — full security audit, sensitive service hardlist, dual-server coverage
+## [1.4.0] - 2026-03-01
+
+### Added
+- **Credential hygiene audit** in `sentinel-daily.sh` — runs on both servers nightly:
+  - Plaintext credentials in config files (JSON, YAML, TOML, conf) outside `.env`
+  - Shell history secrets (passwords, tokens, API keys in bash/zsh history)
+  - Scattered `.env`, `.pem`, `.key`, `id_rsa` files across home directory
+  - Stale credential files (30+ days untouched — likely forgotten)
+  - World-readable `.env` files (permission check)
