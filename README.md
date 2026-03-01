@@ -126,3 +126,11 @@ Example: a heartbeat agent that checks the file on every poll and notifies you.
 
 **Skill Scanner v3** — pre-installation skill auditing, 31 detection modules + LLM semantic analysis  
 `github.com/JXXR1/skill-scanner-v2`
+
+## Recommended Companion Tools
+
+| Tool | Purpose | Install |
+|------|---------|---------|
+| `git-secrets` | Pre-commit hook preventing credential commits | `git clone https://github.com/awslabs/git-secrets.git && cd git-secrets && make install` |
+| `truffleHog` | Git history credential scanner | `pip3 install trufflehog` |
+| Skill Scanner v3 | Pre-install skill security auditing | [JXXR1/skill-scanner-v2](https://github.com/JXXR1/skill-scanner-v2) |

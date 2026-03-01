@@ -182,6 +182,15 @@ credential_audit() {
     if [ -n "$FINDINGS" ]; then
         echo "  => Credential hygiene issues on $name" >> "$LOG"
         ESCALATE="$ESCALATE\n[$name] CREDENTIAL HYGIENE:$FINDINGS"
+        # Remediation guidance
+        echo -e "\n  REMEDIATION STEPS:" >> "$LOG"
+        echo "  1. ROTATE: Generate new keys/tokens for any exposed credentials" >> "$LOG"
+        echo "  2. AUDIT: Check access logs for unauthorized usage (Moltbook: /settings/security, API provider dashboards)" >> "$LOG"
+        echo "  3. LATERAL: Check if compromised credentials were used to access other services or spawn sessions" >> "$LOG"
+        echo "  4. INVALIDATE: Revoke any sessions/tokens spawned using the leaked credentials" >> "$LOG"
+        echo "  5. CLEAN: Remove credentials from shell history (history -c or edit ~/.bash_history)" >> "$LOG"
+        echo "  6. HARDEN: Restrict .env file permissions (chmod 600), add git-secrets pre-commit hooks" >> "$LOG"
+        echo "  7. VERIFY: Re-run this audit to confirm remediation is complete" >> "$LOG"
     else
         echo "  All credential checks passed." >> "$LOG"
     fi
@@ -189,6 +198,25 @@ credential_audit() {
 
 credential_audit "HIVE" ""
 credential_audit "EVE" "ssh $EVE_IP"
+
+# ============================================================
+# PRE-COMMIT HOOK AUDIT — check git repos for credential guards
+# ============================================================
+echo -e "\n--- Pre-commit Hook Audit ---" >> "$LOG"
+REPOS_WITHOUT_HOOKS=0
+for repo in $(find /root -maxdepth 4 -name ".git" -type d 2>/dev/null | grep -v node_modules | grep -v backups); do
+    REPO_DIR=$(dirname "$repo")
+    if [ ! -f "$repo/hooks/pre-commit" ] || ! grep -q "git.secrets" "$repo/hooks/pre-commit" 2>/dev/null; then
+        echo "  WARN: No git-secrets hook in $REPO_DIR" >> "$LOG"
+        ((REPOS_WITHOUT_HOOKS++))
+    fi
+done
+if [ "$REPOS_WITHOUT_HOOKS" -gt 0 ]; then
+    echo "  $REPOS_WITHOUT_HOOKS repo(s) without git-secrets pre-commit hooks" >> "$LOG"
+    echo "  Fix: cd <repo> && git secrets --install" >> "$LOG"
+else
+    echo "  OK: All repos have git-secrets hooks" >> "$LOG"
+fi
 
 # ============================================================
 # ESCALATION

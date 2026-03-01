@@ -64,3 +64,10 @@ All notable changes to SENTINEL v2 will be documented in this file.
   - Scattered `.env`, `.pem`, `.key`, `id_rsa` files across home directory
   - Stale credential files (30+ days untouched — likely forgotten)
   - World-readable `.env` files (permission check)
+
+## [1.5.0] - 2026-03-01
+
+### Added
+- **Remediation guidance** in credential hygiene alerts — when credentials are found, the daily log now includes a 7-step remediation checklist: rotate, audit access logs, check lateral movement, invalidate spawned sessions, clean history, harden permissions, verify. Inspired by u/samma_sentinel's feedback on the remediation delta.
+- **Pre-commit hook audit** — nightly check that all git repos under /root have git-secrets hooks installed. Reports repos without credential guards.
+- **git-secrets + truffleHog** added to recommended install (README)
