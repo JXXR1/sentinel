@@ -1,6 +1,15 @@
 #!/bin/bash
-# SENTINEL Security Check Script v1.2.0
+# SENTINEL Security Check Script v1.6.0
 # Runs on HIVE, checks both HIVE and EVE
+#
+# v1.6.0 (2026-04-29): adds 2026 agent-platform-specific monitoring:
+#   - OpenClaw scope-upgrade burst detection (pending pairing > 2 = alert)
+#   - paired.json SHA-256 integrity baseline + drift detection
+#   - Subagent registry drift (configurable via OPENCLAW_EXPECTED_AGENTS env)
+#
+# Pairs with skill-scanner v3.3.0 which addresses the static-analysis side
+# of the same threat landscape (IPI surface, capability bloat, system-prompt
+# fallacy).
 
 LOG_DIR="/root/hive/logs"
 mkdir -p "$LOG_DIR"
@@ -216,6 +225,93 @@ check_server() {
     fi
     echo "Disk: ${DISK}%" >> "$LOG"
     [ "$DISK" -gt 90 ] && ESCALATE="$ESCALATE\n[$name] Disk critical: ${DISK}%"
+
+    # ============================================================
+    # AGENT-PLATFORM MONITORING (v1.6.0 — OpenClaw-specific)
+    # Local server only — uses filesystem state (paired.json, agents/)
+    # Skipped on remote SSH targets to keep the check self-contained
+    # ============================================================
+    if [ -z "$cmd_prefix" ]; then
+        OC_DIR="${OPENCLAW_DIR:-$HOME/.openclaw}"
+        if [ -d "$OC_DIR" ]; then
+            echo "OpenClaw pairing/scope check:" >> "$LOG"
+
+            # Pending scope-upgrade burst detection
+            # A single pending request from a tool is normal; >2 simultaneous
+            # is suspicious (could indicate compromised tool spamming requests
+            # or an external actor probing the pairing surface).
+            if [ -f "$OC_DIR/devices/pending.json" ]; then
+                PENDING_COUNT=$(python3 -c "import json; d=json.load(open('$OC_DIR/devices/pending.json')); print(len(d) if isinstance(d,dict) else 0)" 2>/dev/null || echo 0)
+                echo "  pending requests: $PENDING_COUNT" >> "$LOG"
+                if [ "${PENDING_COUNT:-0}" -gt 2 ]; then
+                    SCOPES=$(python3 -c "
+import json
+d = json.load(open('$OC_DIR/devices/pending.json'))
+all_scopes = set()
+for v in d.values():
+    for s in v.get('scopes', []):
+        all_scopes.add(s)
+print(','.join(sorted(all_scopes)))
+" 2>/dev/null || echo "?")
+                    echo "  SCOPE-UPGRADE BURST: $PENDING_COUNT pending, scopes: $SCOPES" >> "$LOG"
+                    ESCALATE="$ESCALATE
+[$name] OpenClaw scope-upgrade burst: $PENDING_COUNT pending pairing requests"
+                    ESCALATE_DETAIL="$ESCALATE_DETAIL
+[$name] Scopes requested across pending: $SCOPES"
+                fi
+            fi
+
+            # paired.json integrity baseline
+            # Captures SHA-256 of the device pairing record on first run,
+            # flags drift on subsequent runs. Detects manual edits granting
+            # elevated scope, token rotation, or unauthorized pairings.
+            BASELINE_DIR="/root/hive/baseline"
+            mkdir -p "$BASELINE_DIR"
+            if [ -f "$OC_DIR/devices/paired.json" ]; then
+                BASELINE_FILE="$BASELINE_DIR/paired.json.sha256"
+                CURRENT_SHA=$(sha256sum "$OC_DIR/devices/paired.json" | awk '{print $1}')
+                if [ -f "$BASELINE_FILE" ]; then
+                    BASELINE_SHA=$(cat "$BASELINE_FILE")
+                    if [ "$CURRENT_SHA" != "$BASELINE_SHA" ]; then
+                        echo "  PAIRED.JSON CHANGED — baseline: $BASELINE_SHA, current: $CURRENT_SHA" >> "$LOG"
+                        ESCALATE="$ESCALATE
+[$name] OpenClaw paired.json modified since last baseline"
+                        ESCALATE_DETAIL="$ESCALATE_DETAIL
+[$name] paired.json baseline drift — review device pairings; refresh baseline if expected with: rm $BASELINE_FILE"
+                    else
+                        echo "  paired.json unchanged" >> "$LOG"
+                    fi
+                else
+                    echo "$CURRENT_SHA" > "$BASELINE_FILE"
+                    echo "  paired.json baseline established: $CURRENT_SHA" >> "$LOG"
+                fi
+            fi
+
+            # Subagent registry drift
+            # Compares actual agents in $OC_DIR/agents/ against expected set.
+            # Configurable via OPENCLAW_EXPECTED_AGENTS env var (comma-separated).
+            EXPECTED="${OPENCLAW_EXPECTED_AGENTS:-main}"
+            if [ -d "$OC_DIR/agents" ]; then
+                CURRENT_AGENTS=$(ls -1 "$OC_DIR/agents/" 2>/dev/null | sort | tr '\n' ',' | sed 's/,$//')
+                EXPECTED_SORTED=$(echo "$EXPECTED" | tr ',' '\n' | sort | tr '\n' ',' | sed 's/,$//')
+                echo "  agents present: $CURRENT_AGENTS" >> "$LOG"
+                echo "  agents expected: $EXPECTED_SORTED" >> "$LOG"
+                UNEXPECTED=""
+                for a in $(echo "$CURRENT_AGENTS" | tr ',' ' '); do
+                    if ! echo ",$EXPECTED_SORTED," | grep -q ",$a,"; then
+                        UNEXPECTED="$UNEXPECTED $a"
+                    fi
+                done
+                if [ -n "$UNEXPECTED" ]; then
+                    echo "  UNEXPECTED AGENT(S):$UNEXPECTED" >> "$LOG"
+                    ESCALATE="$ESCALATE
+[$name] Unexpected OpenClaw agent(s):$UNEXPECTED"
+                    ESCALATE_DETAIL="$ESCALATE_DETAIL
+[$name] Agent registry drift — review $OC_DIR/agents/ (set OPENCLAW_EXPECTED_AGENTS env var to allow these)"
+                fi
+            fi
+        fi
+    fi
 }
 
 check_server "HIVE" ""

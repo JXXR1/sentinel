@@ -4,6 +4,41 @@ All notable changes to SENTINEL v2 will be documented in this file.
 
 ---
 
+## [1.6.0] - 2026-04-29
+
+### Added — agent-platform monitoring (OpenClaw-specific)
+
+- **OpenClaw scope-upgrade burst detection** in `sentinel-check-v2.sh`. Counts
+  pending pairing requests in `~/.openclaw/devices/pending.json`; flags as
+  escalation when more than 2 are pending simultaneously. A single tool
+  needing scope is normal; a burst is suspicious — could indicate a compromised
+  tool spamming requests, or an external actor probing the pairing surface.
+  Alert detail includes the union of scopes being requested.
+- **`paired.json` SHA-256 integrity baseline + drift detection**. Captures a
+  baseline of the device pairing record on first run; flags drift on subsequent
+  runs. Detects manual edits granting elevated scope, token rotation events,
+  or unauthorized pairing additions. Refresh baseline by deleting
+  `/root/hive/baseline/paired.json.sha256`.
+- **Subagent registry drift detection**. Compares actual subagents
+  (`~/.openclaw/agents/`) against the configurable expected set
+  (`OPENCLAW_EXPECTED_AGENTS` env var, comma-separated). Flags unexpected
+  subagent additions — relevant for catching unauthorized subagent spawns.
+
+### Why this update
+
+Between Feb and April 2026, the AI-agent platform threat landscape shifted
+materially. Google Threat Intelligence flagged indirect prompt injection (IPI)
+as the #1 attack vector for AI agents in 2026; schema-leakage research
+identified latent-capability surface as a real risk; and our own operational
+experience surfaced scope-upgrade abuse as a concrete attack pattern on
+OpenClaw pairings. SENTINEL v1.5.0 monitored host-level posture but had no
+detections for these agent-platform-specific threats.
+
+This release adds runtime monitoring for those gaps. The static-analysis side
+is covered by skill-scanner v3.3.0 (separate project, see Modules 32/33/34).
+
+---
+
 ## [1.3.1] - 2026-02-28
 
 ### Fixed
