@@ -4,6 +4,57 @@ All notable changes to SENTINEL v2 will be documented in this file.
 
 ---
 
+## [1.7.0] - 2026-05-12
+
+### Added — Supply-chain integration + outbound recon + backup integrity (sentinel-daily)
+
+- **Skill-Scanner Supply-Chain Audit.** sentinel-daily.sh runs `skill-scan-v2.sh`
+  (v3.4 + v3.5) against every installed skill directory under configurable roots
+  (default `~/.openclaw/agents/*/skills` and `~/.openclaw/skills`). Skill identified
+  by `SKILL.md` or `manifest.json` presence. MALICIOUS exit (rc ≥ 10) escalates
+  with skill name + path; WARN (rc 1-9) logs only; clean = `OK`. Silent skip if
+  no skill dirs match — works whether or not the host has skills installed today.
+  Config: `SENTINEL_SKILL_SCANNER_BIN`, `SENTINEL_SKILL_ROOTS`.
+
+- **LLM-Vendor Outbound Audit (Squid-log based).** Scans `/var/log/squid/access.log`
+  for last-24h outbound calls to AI/LLM vendor endpoints: OpenAI, Anthropic,
+  HuggingFace, Telnyx, Soniox, Replicate, Together, Mistral, DeepSeek, xAI,
+  Google Gemini, Cohere. Cross-references each unique destination host against
+  the workspace `.egress-known-domains.json` allowlist via jq. Escalates if any
+  vendor host hit in last 24h is NOT on the allowlist — potential
+  credential-theft / data-exfil signal. Config: `SENTINEL_EGRESS_ALLOWLIST`,
+  `SENTINEL_SQUID_LOG`.
+
+- **Backup Integrity Verification.** Per `feedback_rsync_silent_success.md` —
+  silent success ≠ correct. Verifies each layer of the EVE backup chain
+  produced files in the expected size band within the expected window:
+  fast-incremental (< 30 min), daily (< 26 h), Hetzner Box sync log (< 26 h).
+  Each layer skips silently if path not present (host-tunable). Config:
+  `SENTINEL_BACKUP_FAST_DIR`, `SENTINEL_BACKUP_DAILY_DIR`, `SENTINEL_BACKUP_BOX_LOG`.
+
+- **Tailscale Posture Audit.** Tracks tailnet peer count vs baseline; alerts
+  on drift (refresh baseline by removing `$SENTINEL_TS_PEER_BASELINE`). Scans
+  `ss -tlnH` for any `0.0.0.0:<port>` bindings; consults a UFW-protected-ports
+  allowlist (currently mirrored from `sentinel-check-v2.sh`; consolidation TODO)
+  so legitimate bindings like `wazuh-authd:1515` don't generate false positives.
+  Non-allowlisted 0.0.0.0 bindings escalate per `feedback_no_public_binding.md`.
+
+### Changed
+
+- `sentinel-check-v2.sh` header comment "Pairs with skill-scanner v3.3.0"
+  bumped to v3.5.0 and expanded to reflect the v3.4 supply-chain modules +
+  v3.5 release-signature verification that landed today.
+
+### Notes
+
+- These v1.7 additions are intentionally read-only audits — they log + escalate,
+  never auto-remediate. Per `feedback_never_break_self_remediating.md`.
+- All new sections gracefully skip when their data source is missing
+  (no Squid log = skip vendor audit; no skill dirs = skip skill-scanner audit;
+  etc.), so the script remains usable on hosts that don't have every layer.
+
+---
+
 ## [1.6.0] - 2026-04-29
 
 ### Added — agent-platform monitoring (OpenClaw-specific)
