@@ -35,14 +35,19 @@ Built after a real incident — two services sat exposed on `0.0.0.0` for days w
 | `sentinel-file-watch.sh` | Real-time sensitive file access monitor (inotify daemon) | Persistent |
 | `sentinel-daily.sh` | Deep security stack audit across all servers | Daily (3am) |
 | `sentinel-intel.sh` | Threat intel: CVE feeds, update checks, vulnerability scan | Every 6 hours |
+| `sentinel-outbound-guard.sh` *(v1.9, Layer 27)* | Egress allowlist — flags non-allowlisted outbound from selected processes | Every 1–2 min |
+| `sentinel-stack-health.sh` *(v1.9, Layer 30)* | Stack alive/fresh/vocal check + safe auto-remediation | Every 4 hours |
 
-### Three alert layers
+### Alert layers (latency tiers)
 
 | Layer | Script | Trigger | Latency |
 |-------|--------|---------|---------|
 | File access | `sentinel-file-watch.sh` | Immediate (inotify) | < 1 second |
 | Port/service exposure | `sentinel-watchdog.sh` | Polling | < 2 minutes |
+| Egress violation *(v1.9, Layer 27)* | `sentinel-outbound-guard.sh` | Polling | < 2 minutes |
 | Full audit + intel | `sentinel-check-v2.sh` + `sentinel-intel.sh` | Delta-based | 6 hours |
+| Stack alive/fresh/vocal *(v1.9, Layer 30)* | `sentinel-stack-health.sh` | Polling | < 4 hours |
+| Deep daily | `sentinel-daily.sh` | Scheduled | 24 hours |
 
 ---
 

@@ -4,6 +4,51 @@ All notable changes to SENTINEL v2 will be documented in this file.
 
 ---
 
+## [1.9.0] - 2026-05-12
+
+### Added — two new defensive layers
+
+- **`sentinel-outbound-guard.sh` (Layer 27).** Egress allowlist enforcement.
+  Inspects established outbound connections from selected processes (regex
+  configurable via `SENTINEL_OUTBOUND_PROCESSES`) and flags anything heading
+  to a destination port outside the allowlist (`SENTINEL_OUTBOUND_PORTS_OK`)
+  or — if a host allowlist is configured — to a non-allowlisted hostname.
+  Optional kill-on-violation gated by `SENTINEL_OUTBOUND_KILL=true`.
+  Writes `OUTBOUND-GUARD.json` escalation when violations detected; clears
+  it on next clean run.
+
+- **`sentinel-stack-health.sh` (Layer 30).** Verifies the security stack
+  is *alive, fresh, and vocal*:
+  - Alive — `systemctl is-active` on configurable daemon list
+    (`SENTINEL_STACK_DAEMONS`).
+  - Fresh — Suricata rules + ClamAV daily DB recently updated;
+    AIDE baseline not older than dpkg activity by >7 days.
+  - Vocal — `eve.json`, `auth.log`, `aide-check.log`, CrowdSec DB written
+    within their SLA windows. Catches the failure mode where a daemon is
+    "active" but silently broken.
+  - Safe auto-remediation (start daemon, freshclam, suricata-update +
+    reload, aide --init, restart crowdsec/suricata) with two hard guards:
+    (1) `SENTINEL_STACK_CRITICAL` list of services never auto-restarted,
+    (2) cascade safety — if >5 alerts in one run, quarantine all and
+    escalate instead of trying to fix.
+  - Writes `STACK-HEALTH.json` escalation with three buckets:
+    `auto_remediated`, `quarantined`, `needs_action`.
+
+### Notes
+
+- Both scripts use the existing JSON-escalation pattern (one file per
+  alert type in `SENTINEL_ESCALATION_DIR`, default `/var/lib/sentinel/escalations`).
+  No direct push channel — wire to your notifier of choice.
+- Both scripts exit 0 always; presence of the JSON escalation file is
+  the signal.
+- Numbering (Layer 27, 30) reflects the original sequential layer scheme
+  these scripts were developed under; gaps between numbers correspond to
+  agent-identity-specific layers (file-integrity-monitor, vault-integrity-monitor,
+  bootstrap-auditor) that remain out-of-scope for the public repo because
+  they overlap with existing OSS FIM tooling (aide, tripwire, Wazuh FIM).
+
+---
+
 ## [1.8.0] - 2026-05-12
 
 ### Added — VN (VoxNutrix) as third monitored host
