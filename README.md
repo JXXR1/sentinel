@@ -135,7 +135,7 @@ Example: a heartbeat agent that checks the file on every poll and notifies you.
 ## Related
 
 **Skill Scanner v3.5** — pre-installation skill auditing for AI agent skills, 38 detection modules covering pattern matching, AST taint tracking, YARA, LLM semantic analysis, supply-chain provenance, and PGP release-signature verification.
-`github.com/JXXR1/skill-scanner-v2`
+`github.com/JXXR1/skill-scanner`
 
 ## Recommended Companion Tools
 
@@ -143,4 +143,4 @@ Example: a heartbeat agent that checks the file on every poll and notifies you.
 |------|---------|---------|
 | `git-secrets` | Pre-commit hook preventing credential commits | `git clone https://github.com/awslabs/git-secrets.git && cd git-secrets && make install` |
 | `truffleHog` | Git history credential scanner | `pip3 install trufflehog` |
-| Skill Scanner v3.5 | Pre-install skill security auditing (38 modules, harness-agnostic) | [JXXR1/skill-scanner-v2](https://github.com/JXXR1/skill-scanner-v2) |
+| Skill Scanner v3.5 | Pre-install skill security auditing (38 modules, harness-agnostic) | [JXXR1/skill-scanner](https://github.com/JXXR1/skill-scanner) |
