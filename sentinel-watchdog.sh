@@ -122,13 +122,15 @@ check_host() {
     echo "$findings"
 }
 
-# Check both servers
+# Check all three servers
 HIVE_FINDINGS=$(check_host "HIVE" "")
 EVE_FINDINGS=$(check_host "EVE" "ssh 100.79.182.103")
+VN_FINDINGS=$(check_host "VN" "ssh 100.82.87.118")
 
 ALL_FINDINGS=""
 [ -n "$HIVE_FINDINGS" ] && ALL_FINDINGS="$ALL_FINDINGS\n[HIVE]:$HIVE_FINDINGS"
 [ -n "$EVE_FINDINGS"  ] && ALL_FINDINGS="$ALL_FINDINGS\n[EVE]:$EVE_FINDINGS"
+[ -n "$VN_FINDINGS"   ] && ALL_FINDINGS="$ALL_FINDINGS\n[VN]:$VN_FINDINGS"
 
 if [ -n "$ALL_FINDINGS" ]; then
     cat > "$ACTIVE_FILE" << EOFJSON

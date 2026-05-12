@@ -2,11 +2,12 @@
 LOG="/root/hive/logs/daily-$(date -u +%Y-%m-%d).log"
 ESCALATE=""
 EVE_IP="100.79.182.103"
+VN_IP="100.82.87.118"
 
 echo "=== SENTINEL Daily Scan $(date -u) ===" > "$LOG"
 
 # ============================================================
-# SECURITY STACK HEALTH CHECK — both servers
+# SECURITY STACK HEALTH CHECK — all three servers (HIVE + EVE + VN)
 # ============================================================
 check_stack() {
     local name=$1
@@ -66,6 +67,7 @@ check_stack() {
 
 check_stack "HIVE" ""
 check_stack "EVE" "ssh $EVE_IP"
+check_stack "VN" "ssh $VN_IP"
 
 # ============================================================
 # AUTO-UPDATES
@@ -76,8 +78,11 @@ apt-get update -qq && apt-get upgrade -y >> "$LOG" 2>&1
 echo -e "\n--- EVE Updates ---" >> "$LOG"
 ssh $EVE_IP "apt-get update -qq && apt-get upgrade -y" >> "$LOG" 2>&1
 
+echo -e "\n--- VN Updates ---" >> "$LOG"
+ssh $VN_IP "apt-get update -qq && apt-get upgrade -y" >> "$LOG" 2>&1
+
 # ============================================================
-# CLAMSCAN — both servers
+# CLAMSCAN — all three servers
 # ============================================================
 echo -e "\n--- ClamAV: HIVE ---" >> "$LOG"
 freshclam --quiet 2>/dev/null
@@ -90,8 +95,13 @@ CLAM_EVE=$(ssh $EVE_IP "freshclam --quiet 2>/dev/null; clamscan -r /root --quiet
 [ -n "$CLAM_EVE" ] && ESCALATE="$ESCALATE\n[EVE] ClamAV infections found: $CLAM_EVE"
 echo "${CLAM_EVE:-Clean}" >> "$LOG"
 
+echo -e "\n--- ClamAV: VN ---" >> "$LOG"
+CLAM_VN=$(ssh $VN_IP "freshclam --quiet 2>/dev/null; clamscan -r /root --quiet --infected 2>/dev/null" || echo "")
+[ -n "$CLAM_VN" ] && ESCALATE="$ESCALATE\n[VN] ClamAV infections found: $CLAM_VN"
+echo "${CLAM_VN:-Clean}" >> "$LOG"
+
 # ============================================================
-# RKHUNTER — both servers
+# RKHUNTER — all three servers
 # ============================================================
 echo -e "\n--- rkhunter: HIVE ---" >> "$LOG"
 RKH_HIVE=$(rkhunter --check --skip-keypress --report-warnings-only 2>/dev/null | grep -E 'Warning|Found' || echo "Clean")
@@ -103,8 +113,13 @@ RKH_EVE=$(ssh $EVE_IP "rkhunter --check --skip-keypress --report-warnings-only 2
 [ "$RKH_EVE" != "Clean" ] && ESCALATE="$ESCALATE\n[EVE] rkhunter warnings: $RKH_EVE"
 echo "$RKH_EVE" >> "$LOG"
 
+echo -e "\n--- rkhunter: VN ---" >> "$LOG"
+RKH_VN=$(ssh $VN_IP "rkhunter --check --skip-keypress --report-warnings-only 2>/dev/null | grep -E 'Warning|Found' || echo 'Clean'" || echo "SSH failed")
+[ "$RKH_VN" != "Clean" ] && ESCALATE="$ESCALATE\n[VN] rkhunter warnings: $RKH_VN"
+echo "$RKH_VN" >> "$LOG"
+
 # ============================================================
-# CREDENTIAL HYGIENE — both servers
+# CREDENTIAL HYGIENE — all three servers
 # ============================================================
 credential_audit() {
     local name=$1
@@ -198,6 +213,7 @@ credential_audit() {
 
 credential_audit "HIVE" ""
 credential_audit "EVE" "ssh $EVE_IP"
+credential_audit "VN" "ssh $VN_IP"
 
 # ============================================================
 # PRE-COMMIT HOOK AUDIT — check git repos for credential guards

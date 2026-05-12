@@ -4,6 +4,28 @@ All notable changes to SENTINEL v2 will be documented in this file.
 
 ---
 
+## [1.8.0] - 2026-05-12
+
+### Added — VN (VoxNutrix) as third monitored host
+
+- `sentinel-daily.sh`, `sentinel-check-v2.sh`, `sentinel-watchdog.sh` all extended
+  from `{HIVE, EVE}` to `{HIVE, EVE, VN}`. VN reachable at tailnet `100.82.87.118`.
+- All cross-host audits (security stack, ClamAV, rkhunter, credential hygiene,
+  auto-updates, watchdog drift detection, full server check) now cover VN.
+- Trust setup: HIVE's ed25519 pubkey authorised on VN; VN host key trusted on HIVE.
+
+### Notes
+
+- VN is dev/staging today; pre-launch state. Auto-update policy currently mirrors
+  EVE/HIVE (apt upgrade -y daily) — once VN starts taking real clinic calls,
+  reconsider whether auto-updates should be moved behind a release window.
+- Sentinel-daily's `LOG` path is still hardcoded to `/root/hive/logs/...` because
+  this script is intended to run from HIVE as the central aggregator. Per-host
+  log paths are a separate refactor (parameterise via env var) and not required
+  for v1.8.
+
+---
+
 ## [1.7.0] - 2026-05-12
 
 ### Added — Supply-chain integration + outbound recon + backup integrity (sentinel-daily)

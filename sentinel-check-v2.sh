@@ -318,6 +318,7 @@ print(','.join(sorted(all_scopes)))
 
 check_server "HIVE" ""
 check_server "EVE" "ssh 100.79.182.103"
+check_server "VN" "ssh 100.82.87.118"
 
 # ============================================================
 # AI FILE INTEGRITY CHECK (Layer 29)
