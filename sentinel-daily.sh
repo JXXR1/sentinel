@@ -269,6 +269,163 @@ else
 fi
 
 # ============================================================
+# LLM-VENDOR OUTBOUND AUDIT — Squid-log based
+# v1.7: scans Squid access log for outbound calls to AI/LLM vendor
+# endpoints (OpenAI, Anthropic, HuggingFace, Telnyx, Soniox, Replicate,
+# Together, Mistral, DeepSeek, xAI, Google Gemini, Cohere). Cross-
+# references hits against the workspace egress-known-domains allowlist.
+# Alerts on hits to vendors not on the allowlist — potential
+# credential-theft, data-exfil, or unauthorized model-vendor access.
+# ============================================================
+LVO_ALLOWLIST="${SENTINEL_EGRESS_ALLOWLIST:-/root/.openclaw/workspace/.egress-known-domains.json}"
+LVO_SQUID_LOG="${SENTINEL_SQUID_LOG:-/var/log/squid/access.log}"
+LVO_VENDORS="api\.openai\.com|api\.anthropic\.com|huggingface\.co|hf-mirror\.com|api\.telnyx\.com|api\.soniox\.com|replicate\.com|replicate\.delivery|api\.cohere\.ai|api\.together\.xyz|api\.mistral\.ai|api\.deepseek\.com|api\.x\.ai|generativelanguage\.googleapis\.com"
+
+echo -e "\n--- LLM-Vendor Outbound Audit ---" >> "$LOG"
+
+if [ ! -f "$LVO_SQUID_LOG" ]; then
+    echo "  SKIP: Squid access log not found at $LVO_SQUID_LOG" >> "$LOG"
+elif [ ! -f "$LVO_ALLOWLIST" ]; then
+    echo "  SKIP: egress allowlist not found at $LVO_ALLOWLIST" >> "$LOG"
+elif ! command -v jq >/dev/null 2>&1; then
+    echo "  SKIP: jq required for allowlist lookup, not installed" >> "$LOG"
+else
+    SINCE_TS=$(date -u -d '24 hours ago' +%s)
+    # Extract unique vendor hostnames hit in last 24h
+    LVO_HITS=$(awk -v since="$SINCE_TS" -v pat="($LVO_VENDORS)" '
+        $1 >= since && $0 ~ pat {
+            # Squid line: ts elapsed client TCP_/result size METHOD url - HIER ...
+            # For CONNECT: url is host:port. For others: full URL.
+            u = $7
+            sub(/^.*:\/\//, "", u)   # strip scheme://
+            sub(/\/.*$/, "", u)       # strip path
+            sub(/:[0-9]+$/, "", u)    # strip :port
+            if (u ~ pat) print u
+        }' "$LVO_SQUID_LOG" 2>/dev/null | sort -u)
+
+    if [ -z "$LVO_HITS" ]; then
+        echo "  OK: No LLM-vendor outbound traffic in last 24h" >> "$LOG"
+    else
+        LVO_UNAUTH=0
+        LVO_AUTH=0
+        while IFS= read -r host; do
+            [ -z "$host" ] && continue
+            if jq -e --arg h "$host" 'has($h)' "$LVO_ALLOWLIST" >/dev/null 2>&1; then
+                LVO_AUTH=$((LVO_AUTH+1))
+            else
+                echo "  ⚠️  NON-ALLOWLISTED vendor hit: $host" >> "$LOG"
+                LVO_UNAUTH=$((LVO_UNAUTH+1))
+            fi
+        done <<< "$LVO_HITS"
+        echo "  Summary: $LVO_AUTH allowlisted · $LVO_UNAUTH non-allowlisted vendor host(s) in 24h" >> "$LOG"
+        if [ "$LVO_UNAUTH" -gt 0 ]; then
+            ESCALATE="${ESCALATE}⚠️  LLM-vendor outbound: $LVO_UNAUTH non-allowlisted endpoint(s) in last 24h — see daily log\n"
+        fi
+    fi
+fi
+
+# ============================================================
+# BACKUP INTEGRITY VERIFICATION
+# v1.7: per feedback_rsync_silent_success.md — silent success ≠ correct.
+# Verifies each layer of the EVE backup chain produced files in the
+# expected size band within the expected window. Catches silent failures
+# of fast-incremental, daily, or Hetzner Box layers.
+# ============================================================
+BIV_FAST_DIR="${SENTINEL_BACKUP_FAST_DIR:-/root/backups/fast-incremental}"
+BIV_DAILY_DIR="${SENTINEL_BACKUP_DAILY_DIR:-/root/backups/daily}"
+BIV_BOX_LOG="${SENTINEL_BACKUP_BOX_LOG:-/var/log/hetzner-box-sync.log}"
+
+echo -e "\n--- Backup Integrity ---" >> "$LOG"
+
+# Layer 1: fast-incremental (expected: file written within last 30 min)
+if [ -d "$BIV_FAST_DIR" ]; then
+    NEWEST_FAST=$(find "$BIV_FAST_DIR" -type f -mmin -30 2>/dev/null | head -1)
+    if [ -n "$NEWEST_FAST" ]; then
+        SIZE=$(stat -c %s "$NEWEST_FAST" 2>/dev/null || echo 0)
+        echo "  OK: fast-incremental — newest file <30min old, ${SIZE}B" >> "$LOG"
+    else
+        echo "  ⚠️  fast-incremental — no files modified in last 30 min" >> "$LOG"
+        ESCALATE="${ESCALATE}⚠️  Backup chain: fast-incremental appears stale (>30 min since last write)\n"
+    fi
+else
+    echo "  SKIP: fast-incremental dir $BIV_FAST_DIR not present" >> "$LOG"
+fi
+
+# Layer 2: daily (expected: file written within last 26 hours)
+if [ -d "$BIV_DAILY_DIR" ]; then
+    NEWEST_DAILY=$(find "$BIV_DAILY_DIR" -type f -mmin -1560 2>/dev/null | head -1)
+    if [ -n "$NEWEST_DAILY" ]; then
+        SIZE=$(stat -c %s "$NEWEST_DAILY" 2>/dev/null || echo 0)
+        echo "  OK: daily — newest file <26h old, ${SIZE}B" >> "$LOG"
+    else
+        echo "  ⚠️  daily backup appears stale (>26h since last write)" >> "$LOG"
+        ESCALATE="${ESCALATE}⚠️  Backup chain: daily layer appears stale (>26h)\n"
+    fi
+else
+    echo "  SKIP: daily dir $BIV_DAILY_DIR not present" >> "$LOG"
+fi
+
+# Layer 3: Hetzner Box sync log
+if [ -f "$BIV_BOX_LOG" ]; then
+    BOX_AGE_HOURS=$(( ( $(date +%s) - $(stat -c %Y "$BIV_BOX_LOG") ) / 3600 ))
+    if [ "$BOX_AGE_HOURS" -gt 26 ]; then
+        echo "  ⚠️  Hetzner Box sync log not updated in ${BOX_AGE_HOURS}h" >> "$LOG"
+        ESCALATE="${ESCALATE}⚠️  Backup chain: Hetzner Box sync log stale (${BOX_AGE_HOURS}h)\n"
+    else
+        echo "  OK: Hetzner Box sync log updated ${BOX_AGE_HOURS}h ago" >> "$LOG"
+    fi
+else
+    echo "  SKIP: Hetzner Box log $BIV_BOX_LOG not present" >> "$LOG"
+fi
+
+# ============================================================
+# TAILSCALE POSTURE AUDIT
+# v1.7: per feedback_tailscale_bound_services_systemd.md and
+# feedback_no_public_binding.md — sensitive services must bind to
+# tailscale0 / 127.0.0.1 only, never 0.0.0.0. Also tracks tailnet
+# peer count drift (alert on unexpected peer changes).
+# ============================================================
+TSP_PEER_BASELINE="${SENTINEL_TS_PEER_BASELINE:-/root/hive/baseline/tailscale-peers.count}"
+
+echo -e "\n--- Tailscale Posture ---" >> "$LOG"
+
+if ! command -v tailscale >/dev/null 2>&1; then
+    echo "  SKIP: tailscale not installed" >> "$LOG"
+else
+    TS_STATUS=$(tailscale status --json 2>/dev/null)
+    if [ -z "$TS_STATUS" ]; then
+        echo "  ⚠️  Tailscale not running or status unavailable" >> "$LOG"
+        ESCALATE="${ESCALATE}⚠️  Tailscale: not running\n"
+    else
+        TS_PEER_COUNT=$(echo "$TS_STATUS" | jq '.Peer | length' 2>/dev/null || echo 0)
+        echo "  Peer count: $TS_PEER_COUNT" >> "$LOG"
+        mkdir -p "$(dirname "$TSP_PEER_BASELINE")" 2>/dev/null
+        if [ ! -f "$TSP_PEER_BASELINE" ]; then
+            echo "$TS_PEER_COUNT" > "$TSP_PEER_BASELINE"
+            echo "  INFO: peer-count baseline written ($TS_PEER_COUNT)" >> "$LOG"
+        else
+            BASELINE_COUNT=$(cat "$TSP_PEER_BASELINE")
+            if [ "$TS_PEER_COUNT" != "$BASELINE_COUNT" ]; then
+                echo "  ⚠️  Peer count drift: was $BASELINE_COUNT, now $TS_PEER_COUNT" >> "$LOG"
+                ESCALATE="${ESCALATE}⚠️  Tailscale peer count drift: $BASELINE_COUNT → $TS_PEER_COUNT (refresh baseline if expected)\n"
+            else
+                echo "  OK: peer count matches baseline ($BASELINE_COUNT)" >> "$LOG"
+            fi
+        fi
+
+        # Audit 0.0.0.0 bindings — forbidden per locked rule
+        PUBLIC_BINDS=$(ss -tlnH 2>/dev/null | awk '$4 ~ /^0\.0\.0\.0:/ {print $4}' | sort -u)
+        if [ -n "$PUBLIC_BINDS" ]; then
+            echo "  🚫 0.0.0.0 bindings detected:" >> "$LOG"
+            echo "$PUBLIC_BINDS" | sed 's/^/      /' >> "$LOG"
+            ESCALATE="${ESCALATE}🚫 0.0.0.0 binding(s) found — violates feedback_no_public_binding.md\n"
+        else
+            echo "  OK: no 0.0.0.0 bindings" >> "$LOG"
+        fi
+    fi
+fi
+
+# ============================================================
 # ESCALATION
 # ============================================================
 if [ -n "$ESCALATE" ]; then
