@@ -18,6 +18,11 @@ Built after a real incident — two services sat exposed on `0.0.0.0` for days w
 - Sensitive file access (credentials, config, identity files)
 - Security stack health (ClamAV, CrowdSec, Wazuh, fail2ban)
 - Threat intel: CVE feeds, package vulnerability checks
+- **Skill-scanner supply-chain audit** *(v1.7)* — runs `skill-scan-v2.sh` against every installed agent skill directory; MALICIOUS exit escalates with name + path
+- **LLM-vendor outbound audit** *(v1.7)* — Squid-log-based scan of last 24h for calls to AI/LLM vendor endpoints (OpenAI, Anthropic, HuggingFace, Telnyx, Soniox, Replicate, Mistral, DeepSeek, xAI, Gemini, Cohere); cross-references against egress allowlist, escalates on non-allowlist hits (credential-theft / data-exfil signal)
+- **Backup integrity verification** *(v1.7)* — per-layer checks against expected file sizes + windows (catches the "rsync silent success" failure mode: empty log ≠ healthy backup)
+- **Tailscale posture audit** *(v1.7)* — tracks tailnet peer count vs baseline (alerts on drift), scans `ss -tlnH` for any `0.0.0.0:<port>` bindings with a UFW-protected-ports allowlist
+- **Multi-host coverage** *(v1.8)* — `sentinel-daily`, `sentinel-check-v2`, `sentinel-watchdog` audit multiple servers from one central aggregator over SSH (default: HIVE + EVE + VN pattern; re-configurable per deployment)
 
 ---
 
@@ -124,7 +129,7 @@ Example: a heartbeat agent that checks the file on every poll and notifies you.
 
 ## Related
 
-**Skill Scanner v3** — pre-installation skill auditing, 31 detection modules + LLM semantic analysis  
+**Skill Scanner v3.5** — pre-installation skill auditing for AI agent skills, 38 detection modules covering pattern matching, AST taint tracking, YARA, LLM semantic analysis, supply-chain provenance, and PGP release-signature verification.
 `github.com/JXXR1/skill-scanner-v2`
 
 ## Recommended Companion Tools
@@ -133,4 +138,4 @@ Example: a heartbeat agent that checks the file on every poll and notifies you.
 |------|---------|---------|
 | `git-secrets` | Pre-commit hook preventing credential commits | `git clone https://github.com/awslabs/git-secrets.git && cd git-secrets && make install` |
 | `truffleHog` | Git history credential scanner | `pip3 install trufflehog` |
-| Skill Scanner v3 | Pre-install skill security auditing | [JXXR1/skill-scanner-v2](https://github.com/JXXR1/skill-scanner-v2) |
+| Skill Scanner v3.5 | Pre-install skill security auditing (38 modules, harness-agnostic) | [JXXR1/skill-scanner-v2](https://github.com/JXXR1/skill-scanner-v2) |
