@@ -7,9 +7,11 @@
 #   - paired.json SHA-256 integrity baseline + drift detection
 #   - Subagent registry drift (configurable via OPENCLAW_EXPECTED_AGENTS env)
 #
-# Pairs with skill-scanner v3.3.0 which addresses the static-analysis side
-# of the same threat landscape (IPI surface, capability bloat, system-prompt
-# fallacy).
+# Pairs with skill-scanner v3.5.0 which addresses the static-analysis +
+# supply-chain side of the same threat landscape (IPI surface, capability
+# bloat, system-prompt fallacy in v3.3; bundled-content provenance,
+# external-model-download detection, hash-pinning + release-signature
+# verification in v3.4/v3.5).
 
 LOG_DIR="/root/hive/logs"
 mkdir -p "$LOG_DIR"

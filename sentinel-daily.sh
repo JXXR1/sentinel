@@ -413,12 +413,38 @@ else
             fi
         fi
 
-        # Audit 0.0.0.0 bindings — forbidden per locked rule
+        # Audit 0.0.0.0 bindings — forbidden per locked rule, with allowlist
+        # for UFW-protected ports (mirror of sentinel-check-v2.sh
+        # ALLOWED_PUBLIC_PORTS — keep in sync; future: extract to shared
+        # config). Format: "PORT:REASON".
+        TSP_ALLOWED_PUBLIC_PORTS=(
+            "1515:Wazuh-authd-UFW-Tailscale-only"
+        )
         PUBLIC_BINDS=$(ss -tlnH 2>/dev/null | awk '$4 ~ /^0\.0\.0\.0:/ {print $4}' | sort -u)
         if [ -n "$PUBLIC_BINDS" ]; then
-            echo "  🚫 0.0.0.0 bindings detected:" >> "$LOG"
-            echo "$PUBLIC_BINDS" | sed 's/^/      /' >> "$LOG"
-            ESCALATE="${ESCALATE}🚫 0.0.0.0 binding(s) found — violates feedback_no_public_binding.md\n"
+            VIOLATIONS=""
+            ALLOWED_FOUND=""
+            while IFS= read -r bind; do
+                [ -z "$bind" ] && continue
+                port="${bind##*:}"
+                IS_ALLOWED=0
+                for allow in "${TSP_ALLOWED_PUBLIC_PORTS[@]}"; do
+                    allow_port="${allow%%:*}"
+                    if [ "$port" = "$allow_port" ]; then
+                        IS_ALLOWED=1
+                        ALLOWED_FOUND="${ALLOWED_FOUND}      $bind (${allow#*:})\n"
+                        break
+                    fi
+                done
+                [ "$IS_ALLOWED" -eq 0 ] && VIOLATIONS="${VIOLATIONS}      $bind\n"
+            done <<< "$PUBLIC_BINDS"
+            [ -n "$ALLOWED_FOUND" ] && echo -e "  Allowlisted 0.0.0.0 bindings:\n$ALLOWED_FOUND" >> "$LOG"
+            if [ -n "$VIOLATIONS" ]; then
+                echo -e "  🚫 0.0.0.0 binding violations (not on allowlist):\n$VIOLATIONS" >> "$LOG"
+                ESCALATE="${ESCALATE}🚫 0.0.0.0 binding(s) not on allowlist — violates feedback_no_public_binding.md\n"
+            else
+                echo "  OK: all 0.0.0.0 bindings are allowlisted" >> "$LOG"
+            fi
         else
             echo "  OK: no 0.0.0.0 bindings" >> "$LOG"
         fi
