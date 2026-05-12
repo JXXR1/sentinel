@@ -1,4 +1,4 @@
-# SENTINEL v2
+# SENTINEL
 
 Lightweight bash security monitor for Linux servers. Detects exposed services, open ports, suspicious processes, file access events, and threat intel. Writes structured JSON escalations for downstream alerting.
 
@@ -56,8 +56,8 @@ Built after a real incident — two services sat exposed on `0.0.0.0` for days w
 ### 1. Clone and install
 
 ```bash
-git clone https://github.com/JXXR1/sentinel-v2.git
-cd sentinel-v2
+git clone https://github.com/JXXR1/sentinel.git
+cd sentinel
 chmod +x install.sh && ./install.sh
 ```
 
