@@ -219,6 +219,56 @@ else
 fi
 
 # ============================================================
+# SKILL-SCANNER AUDIT — supply-chain integrity of installed AI-agent skills
+# v1.7: runs skill-scan-v2.sh against every installed skill directory.
+# MALICIOUS exit (≥10 issues) escalates with skill name + path.
+# Per `feedback_third_party_provenance.md` — vet third-party skills.
+# ============================================================
+SKILL_SCANNER_BIN="${SENTINEL_SKILL_SCANNER_BIN:-/root/skill-scanner/skill-scan-v2.sh}"
+SKILL_ROOT_GLOBS="${SENTINEL_SKILL_ROOTS:-/root/.openclaw/agents/*/skills /root/.openclaw/skills}"
+
+echo -e "\n--- Skill-Scanner Supply-Chain Audit ---" >> "$LOG"
+if [ ! -x "$SKILL_SCANNER_BIN" ]; then
+    echo "  SKIP: skill-scanner not found at $SKILL_SCANNER_BIN (set SENTINEL_SKILL_SCANNER_BIN to override)" >> "$LOG"
+else
+    SKILLS_SCANNED=0
+    SKILLS_MALICIOUS=0
+    SKILLS_WARN=0
+    # Disable pathname-glob inside the loop body but not for the for-list itself
+    for root_glob in $SKILL_ROOT_GLOBS; do
+        for root in $root_glob; do
+            [ -d "$root" ] || continue
+            # Find skill directories — defined as a dir containing SKILL.md or manifest.json
+            for skill_dir in "$root"/*/; do
+                [ -d "$skill_dir" ] || continue
+                if [ -f "${skill_dir}SKILL.md" ] || [ -f "${skill_dir}manifest.json" ]; then
+                    SKILLS_SCANNED=$((SKILLS_SCANNED+1))
+                    skill_name=$(basename "$skill_dir")
+                    scan_out=$("$SKILL_SCANNER_BIN" --no-llm --yes "$skill_dir" 2>&1 | tail -3)
+                    rc=$?
+                    if [ "$rc" -ge 10 ]; then
+                        echo "  🚫 MALICIOUS: $skill_name ($skill_dir) — issues=$rc" >> "$LOG"
+                        echo "$scan_out" | sed 's/^/      /' >> "$LOG"
+                        SKILLS_MALICIOUS=$((SKILLS_MALICIOUS+1))
+                        ESCALATE="${ESCALATE}🚫 Skill-scanner: MALICIOUS finding on $skill_name at $skill_dir (issues=$rc)\n"
+                    elif [ "$rc" -gt 0 ]; then
+                        echo "  ⚠️  WARN: $skill_name — issues=$rc" >> "$LOG"
+                        SKILLS_WARN=$((SKILLS_WARN+1))
+                    else
+                        echo "  OK: $skill_name — clean" >> "$LOG"
+                    fi
+                fi
+            done
+        done
+    done
+    if [ "$SKILLS_SCANNED" -eq 0 ]; then
+        echo "  INFO: No installed skill directories found under expected roots" >> "$LOG"
+    else
+        echo "  Summary: $SKILLS_SCANNED scanned · $SKILLS_MALICIOUS malicious · $SKILLS_WARN warn" >> "$LOG"
+    fi
+fi
+
+# ============================================================
 # ESCALATION
 # ============================================================
 if [ -n "$ESCALATE" ]; then
